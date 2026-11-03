@@ -1,0 +1,61 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) Find the Gradle project. If it's still inside FileManager.zip, unzip it first.
+      - name: Prepare project
+        id: proj
+        run: |
+          S=$(find . -name settings.gradle.kts -not -path './.git/*' | head -n1)
+          if [ -z "$S" ]; then
+            Z=$(find . -maxdepth 2 -iname '*.zip' -not -path './.git/*' | head -n1)
+            if [ -n "$Z" ]; then
+              echo "Unzipping $Z"
+              mkdir -p _project
+              unzip -q -o "$Z" -d _project
+              S=$(find _project -name settings.gradle.kts | head -n1)
+            fi
+          fi
+          if [ -z "$S" ]; then
+            echo "::error::settings.gradle.kts not found. Repo contents:"
+            find . -maxdepth 3 -not -path './.git/*'
+            exit 1
+          fi
+          D=$(dirname "$S")
+          echo "Project dir: $D"
+          ls -la "$D"
+          echo "dir=$D" >> "$GITHUB_OUTPUT"
+
+      # 2) Tooling
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # The runner already has the Android SDK; just accept the licenses.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      # 3) Build
+      - name: Build debug APK
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: gradle :app:assembleDebug --console=plain --no-daemon
+
+      # 4) Upload the APK
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileManager-debug-apk
+          path: ${{ steps.proj.outputs.dir }}/app/build/outputs/apk/debug/*.apk
